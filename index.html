@@ -97,7 +97,7 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":200226816,"index.wasm":35376909},"focusCanvas":true,"gdextensionLibs":[]};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":200226944,"index.wasm":35376909},"focusCanvas":true,"gdextensionLibs":[]};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -177,20 +177,20 @@ const engine = new Engine(GODOT_CONFIG);
 			displayFailureNotice(missingMsg + missing.join('\n'));
 		}
 	} else {
-		setStatusMode('progress');
 		const PACK = 'index.pck';
 		const PACK_PARTS = 5;
-		const PACK_SIZE = 200226816;
+		const PACK_SIZE = 200226944;
 		function setProgress(current, total) {
 			statusProgress.value = current;
 			statusProgress.max = total;
 		}
 		// The pack is split into parts (GitHub Pages refuses files over
-		// 100 MB); fetch them in order and join them into one Blob. The
-		// engine gets a blob: URL - handing it a 200 MB ArrayBuffer makes
-		// preloadFile() stringify it as a lookup key and run out of memory.
+		// 100 MB). Download them straight into one buffer the size of the
+		// pack - no Blob, which Chromium spills to disk when it's this big,
+		// and no second copy - and hand that buffer to the engine's file
+		// system once it's up.
 		async function loadPack() {
-			const chunks = [];
+			const buf = new Uint8Array(PACK_SIZE);
 			let loaded = 0;
 			for (let i = 0; i < PACK_PARTS; i++) {
 				const url = PACK + '.' + String(i).padStart(3, '0');
@@ -202,22 +202,48 @@ const engine = new Engine(GODOT_CONFIG);
 				for (;;) {
 					const { done, value } = await reader.read();
 					if (done) break;
-					chunks.push(value);
+					buf.set(value, loaded);
 					loaded += value.length;
 					setProgress(loaded, PACK_SIZE);
 				}
 			}
-			return URL.createObjectURL(new Blob(chunks));
+			return buf;
 		}
-		Promise.all([engine.init(GODOT_CONFIG['executable']), loadPack()]).then(function (res) {
-			return engine.preloadFile(res[1], PACK);
-		}).then(function () {
-			statusProgress.removeAttribute('value');
-			statusProgress.removeAttribute('max');
-			return engine.start({ 'args': ['--main-pack', PACK] });
-		}).then(() => {
-			setStatusMode('hidden');
-		}, displayFailureNotice);
+		function startGame() {
+			setStatusMode('progress');
+			Promise.all([engine.init(GODOT_CONFIG['executable']), loadPack()]).then(function (res) {
+				engine.copyToFS(PACK, res[1]);
+				statusProgress.removeAttribute('value');
+				statusProgress.removeAttribute('max');
+				return engine.start({ 'args': ['--main-pack', PACK] });
+			}).then(() => {
+				setStatusMode('hidden');
+			}, displayFailureNotice);
+		}
+		// Nothing heavy happens until the player asks for it: opening the
+		// link (or a link preview) doesn't start a 200 MB download and a 3D
+		// engine.
+		const play = document.createElement('div');
+		play.style.cssText = 'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;'
+			+ 'justify-content:center;gap:16px;background:#111;color:#eee;font-family:system-ui,sans-serif;'
+			+ 'text-align:center;padding:16px;z-index:10';
+		const title = document.createElement('div');
+		title.textContent = 'MURARI';
+		title.style.cssText = 'font-size:40px;font-weight:700;letter-spacing:4px';
+		const button = document.createElement('button');
+		button.textContent = 'Play';
+		button.style.cssText = 'font-size:22px;padding:12px 48px;border-radius:8px;border:0;'
+			+ 'background:#e8a33a;color:#111;font-weight:700;cursor:pointer';
+		const note = document.createElement('div');
+		note.textContent = 'Best in Chrome or Edge on a computer. First load downloads about '
+			+ Math.round(PACK_SIZE / 1048576 + 36) + ' MB.';
+		note.style.cssText = 'font-size:14px;opacity:0.7;max-width:420px';
+		play.append(title, button, note);
+		document.body.appendChild(play);
+		button.addEventListener('click', function () {
+			play.remove();
+			startGame();
+		}, { once: true });
 	}
 }());
 		</script>
